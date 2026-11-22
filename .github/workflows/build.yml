@@ -1,0 +1,131 @@
+# Build Wrye BashMon NG on every push to main; publish a GitHub Release when
+# a v* tag is pushed. Actions are pinned to commit SHAs (tag in the comment).
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Build exe
+        run: python -m PyInstaller --noconfirm build.spec
+
+      - name: Selftest the exe
+        shell: pwsh
+        run: |
+          # Any folder works as the game folder for the selftest
+          $game = New-Item -ItemType Directory "$env:RUNNER_TEMP\fakegame" -Force
+          $p = Start-Process -FilePath 'dist\BashMonNG\bashmon.exe' `
+                 -ArgumentList '--selftest', "`"$game`"" -Wait -PassThru
+          $report = "$env:LOCALAPPDATA\Wrye BashMon NG\selftest.txt"
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $report)) {
+            throw "Selftest failed (exit $($p.ExitCode))" }
+          Get-Content $report
+          if (-not (Select-String -Path $report -Pattern 'Frozen:\s+True') -or
+              -not (Select-String -Path $report -Pattern 'wx loaded:\s+False')) {
+            throw 'Selftest report is not as expected' }
+
+      - name: Privacy scan
+        shell: pwsh
+        env:
+          # Comma-separated private words that must never ship. Kept in a
+          # repo secret so the words themselves are not public.
+          PRIVACY_TERMS: ${{ secrets.PRIVACY_TERMS }}
+        run: |
+          $root = 'dist\BashMonNG'
+          $exe = "$root\bashmon.exe"
+          $fail = $false
+          $terms = @($env:PRIVACY_TERMS -split ',' | % { $_.Trim() } | ? { $_ })
+          if (-not $terms) { throw 'PRIVACY_TERMS secret is not set' }
+          # Every shipped file, not only the exe
+          foreach ($f in Get-ChildItem $root -Recurse -File) {
+            $bytes = [IO.File]::ReadAllBytes($f.FullName)
+            $ascii = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
+            $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
+            $rel = $f.FullName.Substring((Resolve-Path $root).Path.Length + 1)
+            foreach ($t in $terms) {
+              if ($ascii.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                  $utf16.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                Write-Host "::error::Private term #$([array]::IndexOf($terms,$t)+1) found in $rel"
+                $fail = $true } }
+            # Build machine user paths. Report them; the runner's own
+            # (runneradmin) is expected and not personal.
+            foreach ($s in @($ascii, $utf16)) {
+              [regex]::Matches($s, '(?i)C:[\\/]Users[\\/][^\\/\x00"]{1,40}') |
+                % Value | Sort-Object -Unique | % { Write-Host "User path in ${rel}: $_" } }
+          }
+          # PE debug directory of our exe: no PDB path should be embedded
+          $exeText = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($exe))
+          if ($exeText -match 'RSDS[\s\S]{20}([ -~]+\.pdb)') {
+            Write-Host "::error::PDB path embedded: $($Matches[1])"; $fail = $true }
+          # Version info fields
+          (Get-Item $exe).VersionInfo |
+            Format-List CompanyName, LegalCopyright, FileDescription, ProductName
+          if ($fail) { throw 'Privacy scan failed' }
+          Write-Host 'Privacy scan clean'
+
+      - name: Zip and checksum
+        shell: pwsh
+        run: |
+          # The zip holds the BashMonNG\ folder, to unzip into Mopy\
+          Compress-Archive -Path 'dist\BashMonNG' -DestinationPath 'dist\WryeBashMonNG.zip'
+          Set-Location dist
+          $h = (Get-FileHash 'WryeBashMonNG.zip' -Algorithm SHA256).Hash.ToLower()
+          "$h *WryeBashMonNG.zip" | Out-File SHA256SUMS.txt -Encoding ascii
+          Get-Content SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wrye-bashmon-ng
+          path: |
+            dist/WryeBashMonNG.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # create the release
+      id-token: write       # build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wrye-bashmon-ng
+          path: dist
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/WryeBashMonNG.zip
+
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          files: |
+            dist/WryeBashMonNG.zip
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true

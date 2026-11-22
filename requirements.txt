@@ -1,0 +1,14 @@
+# Wrye Bash runtime modules the save code loads - keep the versions in step
+# with wrye-bash/requirements.txt (wxPython is NOT needed)
+chardet==5.2.0
+ifileoperation==1.2.6
+lxml==6.1.0
+lz4==4.4.5
+pywin32==311
+PyYAML==6.0.3
+vdf==3.4
+# Tray
+pystray==0.19.5
+Pillow==11.1.0
+# Build
+pyinstaller==6.11.1
