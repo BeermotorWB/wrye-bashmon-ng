@@ -69,6 +69,13 @@ def saves_dir(game_dir: str) -> str:
     return os.path.normpath(os.path.join(base, local.strip()))
 
 def signal_dir(game_dir: str) -> str:
-    """Pluggy's user files folder that Wrye Morph uses to talk to us."""
-    return os.path.join(save_base(game_dir), 'Pluggy', 'User Files',
-                        'BashMon')
+    """Pluggy's user files folder that Wrye Morph uses to talk to us.
+
+    Pluggy builds this path from the Documents folder alone (its DLL holds
+    the fixed 'My Games\\Oblivion\\Pluggy\\User Files\\' and never reads
+    Oblivion.ini), so it is NOT under saveBase: with
+    bUseMyGamesDirectory=0 the saves move to the game folder but Pluggy's
+    files stay in Documents. The original bashmon used saveBase here and
+    never heard from Morph on such setups."""
+    return os.path.join(_documents_dir(), 'My Games', 'Oblivion', 'Pluggy',
+                        'User Files', 'BashMon')

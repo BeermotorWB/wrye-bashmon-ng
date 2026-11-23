@@ -8,9 +8,11 @@ save code (git submodule `wrye-bash/`).
 
 ## Protocol (verified against `Wrye Morph, X6.esp` scripts)
 
-All files live in `<saveBase>\Pluggy\User Files\BashMon\`, where `saveBase`
-is `Documents\My Games\Oblivion` (or the game folder when the game folder's
-`Oblivion.ini` sets `bUseMyGamesDirectory=0`).
+All files live in `Documents\My Games\Oblivion\Pluggy\User Files\BashMon\`.
+Pluggy builds that path from the Documents folder alone and never reads
+`Oblivion.ini`, so it stays there even when `bUseMyGamesDirectory=0` moves
+the saves to the game folder. (The original bashmon used `saveBase` here,
+which broke on such setups.)
 
 | Step | Morph (in game) | BashMon NG |
 |---|---|---|
