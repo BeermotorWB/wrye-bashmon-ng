@@ -45,11 +45,10 @@ Rebuild the patch the same way whenever your faction mods change.
 
 ### Install and run
 
-1. Download `WryeBashMonNG.zip` from
+1. Download `WryeBashMonNG-<version>.zip` from
    [Releases](https://github.com/BeermotorWB/wrye-bashmon-ng/releases) and
    unzip it into Wrye Bash's `Mopy\` folder. You get
-   `Mopy\BashMonNG\bashmon.exe` and its `_internal\` folder; keep them
-   together.
+   `Mopy\BashMonNG\bashmon.exe`.
 2. Add a BashMon button to Wrye Bash's status bar:
    1. Open **Settings → Global Settings…** and go to **Status Bar**.
    2. Click **New**.
@@ -80,7 +79,7 @@ BashMon runs at a time.
 Check a download against `SHA256SUMS.txt` from the same release:
 
 ```
-certutil -hashfile WryeBashMonNG.zip SHA256
+certutil -hashfile WryeBashMonNG-<version>.zip SHA256
 ```
 
 ## How it works

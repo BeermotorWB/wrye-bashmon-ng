@@ -37,28 +37,21 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
-# Onedir build: one process (onefile runs an unpacker parent plus the app)
-# and nothing unpacked to %TEMP% on each start
+# Onefile build: one self-contained dist\bashmon.exe. It runs as two
+# processes (PyInstaller's unpacker plus the app); that is expected.
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='bashmon',  # same exe name as the original, for existing launchers
     icon=os.path.join('bashmon_ng', 'icons', 'bash_icons_blue.ico'),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    name='BashMonNG',  # dist\BashMonNG\ - the folder users unzip into Mopy
 )

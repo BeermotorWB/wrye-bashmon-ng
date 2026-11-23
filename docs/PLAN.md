@@ -66,8 +66,9 @@ main `Oblivion.ini`. BashMon NG never writes INIs.
 
 ## Install
 
-Unzip the release into `Mopy\`: it holds `BashMonNG\bashmon.exe` (the
-original's exe name) plus its `_internal\` folder. The user adds a custom launcher in
+Unzip the release (`WryeBashMonNG-<version>.zip`) into `Mopy\`: it holds
+`BashMonNG\bashmon.exe` (the original's exe name, one self-contained file).
+The user adds a custom launcher in
 Wrye Bash's status bar.
 
 ## Test steps

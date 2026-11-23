@@ -36,7 +36,7 @@ jobs:
         run: |
           # Any folder works as the game folder for the selftest
           $game = New-Item -ItemType Directory "$env:RUNNER_TEMP\fakegame" -Force
-          $p = Start-Process -FilePath 'dist\BashMonNG\bashmon.exe' `
+          $p = Start-Process -FilePath 'dist\bashmon.exe' `
                  -ArgumentList '--selftest', "`"$game`"" -Wait -PassThru
           $report = "$env:LOCALAPPDATA\Wrye BashMon NG\selftest.txt"
           if ($p.ExitCode -ne 0 -or -not (Test-Path $report)) {
@@ -53,31 +53,25 @@ jobs:
           # repo secret so the words themselves are not public.
           PRIVACY_TERMS: ${{ secrets.PRIVACY_TERMS }}
         run: |
-          $root = 'dist\BashMonNG'
-          $exe = "$root\bashmon.exe"
+          $exe = 'dist\bashmon.exe'
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          $ascii = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
+          $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
           $fail = $false
           $terms = @($env:PRIVACY_TERMS -split ',' | % { $_.Trim() } | ? { $_ })
           if (-not $terms) { throw 'PRIVACY_TERMS secret is not set' }
-          # Every shipped file, not only the exe
-          foreach ($f in Get-ChildItem $root -Recurse -File) {
-            $bytes = [IO.File]::ReadAllBytes($f.FullName)
-            $ascii = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
-            $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
-            $rel = $f.FullName.Substring((Resolve-Path $root).Path.Length + 1)
-            foreach ($t in $terms) {
-              if ($ascii.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                  $utf16.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-                Write-Host "::error::Private term #$([array]::IndexOf($terms,$t)+1) found in $rel"
-                $fail = $true } }
-            # Build machine user paths. Report them; the runner's own
-            # (runneradmin) is expected and not personal.
-            foreach ($s in @($ascii, $utf16)) {
-              [regex]::Matches($s, '(?i)C:[\\/]Users[\\/][^\\/\x00"]{1,40}') |
-                % Value | Sort-Object -Unique | % { Write-Host "User path in ${rel}: $_" } }
-          }
-          # PE debug directory of our exe: no PDB path should be embedded
-          $exeText = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($exe))
-          if ($exeText -match 'RSDS[\s\S]{20}([ -~]+\.pdb)') {
+          foreach ($t in $terms) {
+            if ($ascii.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $utf16.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+              Write-Host "::error::Private term #$([array]::IndexOf($terms,$t)+1) found in the exe"
+              $fail = $true } }
+          # Build machine user paths. Report them; the runner's own
+          # (runneradmin) is expected and not personal.
+          foreach ($s in @($ascii, $utf16)) {
+            [regex]::Matches($s, '(?i)C:[\\/]Users[\\/][^\\/\x00"]{1,40}') |
+              % Value | Sort-Object -Unique | % { Write-Host "User path: $_" } }
+          # PE debug directory: no PDB path should be embedded
+          if ($ascii -match 'RSDS[\s\S]{20}([ -~]+\.pdb)') {
             Write-Host "::error::PDB path embedded: $($Matches[1])"; $fail = $true }
           # Version info fields
           (Get-Item $exe).VersionInfo |
@@ -88,18 +82,26 @@ jobs:
       - name: Zip and checksum
         shell: pwsh
         run: |
-          # The zip holds the BashMonNG\ folder, to unzip into Mopy\
-          Compress-Archive -Path 'dist\BashMonNG' -DestinationPath 'dist\WryeBashMonNG.zip'
+          # Name: WryeBashMonNG-0.1.2.zip for tag v0.1.2, or
+          # WryeBashMonNG-dev-<commit>.zip for a plain push
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $ver = $env:GITHUB_REF_NAME -replace '^v', '' }
+          else { $ver = 'dev-' + $env:GITHUB_SHA.Substring(0, 7) }
+          $zip = "WryeBashMonNG-$ver.zip"
+          # The zip holds BashMonNG\bashmon.exe, to unzip into Mopy\
+          $pkg = New-Item -ItemType Directory 'dist\pkg\BashMonNG' -Force
+          Copy-Item 'dist\bashmon.exe' $pkg
+          Compress-Archive -Path 'dist\pkg\BashMonNG' -DestinationPath "dist\$zip"
           Set-Location dist
-          $h = (Get-FileHash 'WryeBashMonNG.zip' -Algorithm SHA256).Hash.ToLower()
-          "$h *WryeBashMonNG.zip" | Out-File SHA256SUMS.txt -Encoding ascii
+          $h = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$h *$zip" | Out-File SHA256SUMS.txt -Encoding ascii
           Get-Content SHA256SUMS.txt
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wrye-bashmon-ng
           path: |
-            dist/WryeBashMonNG.zip
+            dist/WryeBashMonNG-*.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
@@ -120,12 +122,12 @@ jobs:
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/WryeBashMonNG.zip
+          subject-path: dist/WryeBashMonNG-*.zip
 
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: |
-            dist/WryeBashMonNG.zip
+            dist/WryeBashMonNG-*.zip
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
           generate_release_notes: true
