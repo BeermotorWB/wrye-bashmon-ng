@@ -20,6 +20,13 @@ log = logging.getLogger(__name__)
 # hair, eyes, class and stats
 SWAP_FLAGS = 0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x20 | 0x40
 _IMPERIAL_RACE = 0x00907
+# Values for optional NPC_ face subrecords missing from a created NPC
+_FACE_DEFAULTS = {
+    'hairLength': 0.0,
+    'hairRed': 0, 'hairBlue': 0, 'hairGreen': 0, 'unused3': b'\x00',
+    'fggs_p': b'\x00' * 4 * 50, 'fgga_p': b'\x00' * 4 * 30,
+    'fgts_p': b'\x00' * 4 * 50,
+}
 
 class MorphError(Exception):
     """A request we cannot carry out."""
@@ -86,6 +93,12 @@ def get_created_face(save_file: SaveFile, npc_fid: int):
     face.face_masters = save_file._masters
     for att in PCFaces.PCFace.set_from_npc:
         setattr(face, att, _short(getattr(npc, att)))
+    # LNAM, HCLR and the FaceGen subrecords are optional - the game leaves
+    # some out of created NPCs (e.g. LNAM), which reads back as None and
+    # breaks PCFaces.save_setPlayerFace's struct packing
+    for att, default in _FACE_DEFAULTS.items():
+        if getattr(face, att) is None:
+            setattr(face, att, default)
     face.gender = int(npc.npc_flags.npc_female)
     face.pcName = npc.full or ''
     # Stats changed during play live in the NPC's change record
