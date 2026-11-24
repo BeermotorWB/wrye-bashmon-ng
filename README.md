@@ -13,7 +13,7 @@ Status: **work in progress, use at your own risk.**
 - Oblivion (classic, not Remastered)
 - OBSE and Pluggy 0.89 or newer
 - Cobl
-- Wrye Morph 6.28
+- Wrye Morph 6.28 or 6.29
 - Wrye Bash, for the Bashed Patch "Morph Factions" option
 
 ## How to use BashMon
