@@ -3,16 +3,18 @@
 Uses Wrye Bash's Oblivion save code (bosh._saves.SaveFile, bosh.faces). Call
 wb_boot.boot() before importing this module.
 """
+import io
 import logging
 import os
 import shutil
 
 from bash import bush
-from bash.bolt import FName, GPath
+from bash.bolt import FName, GPath, Path, encode, pack_byte, pack_int, \
+    struct_pack
 from bash.brec import FormId
 from bash.brec.mod_io import ShortFidWriteContext
 from bash.bosh._saves import SaveFile, SreNPC
-from bash.bosh.faces import PCFaces
+from bash.bosh.faces import PCFaces, _player_fid
 
 log = logging.getLogger(__name__)
 
@@ -153,6 +155,82 @@ def set_created_face(save_file: SaveFile, npc_fid: int, face):
     sre_npc.factions = [(get_iref(x), y) for x, y in face.factions]
     save_file.fid_recNum[rfid] = sre_npc.getTuple(version)
 
+def set_player_face(save_file: SaveFile, face, swap_flags: int):
+    """Write a face/stats (one of Morph's stored shapes) onto the player.
+
+    Based on PCFaces.save_setPlayerFace, which maps race, hair, eyes and
+    class through MasterMap. That yields tuple-based FormIds whose short_fid
+    drops the master index, so a race or hair from any plugin but
+    Oblivion.esm turned into a missing record and crashed the game on load.
+    The face comes from the same save, so its FormIDs are already the save's
+    own and are written as they are. Differences from Wrye Bash:
+    - no masters are added (the face uses the save's own master list);
+    - the class is written whenever the class flag is set and the face has
+      one. Wrye Bash's custom-class check compared an iref to FormIDs and
+      so never skipped; the result is the same."""
+    flags = PCFaces.pcf_flags(swap_flags)
+    get_iref = save_file.getIref
+    buff = io.BytesIO()
+    def pack_ref(save_fid, do_pack=True):
+        """Write the iref of a save FormID, or leave the old one."""
+        if save_fid and do_pack:
+            pack_int(buff, get_iref(save_fid))
+        else:
+            buff.seek(4, 1)
+    #--Player ACHR
+    old_record = save_file.fid_recNum.get(0x14)
+    old_data = old_record[-1]
+    old_name = save_file.header.pcName
+    name_pos = PCFaces.save_getNamePos(save_file.fileInfo.fn_key, old_data,
+                                       encode(old_name))
+    buff.write(old_data)
+    buff.seek(name_pos - 542)
+    buff.write(struct_pack('=200s120s200s', face.fggs_p, face.fgga_p,
+                           face.fgts_p))
+    pack_ref(face.race, flags.pcf_race)
+    pack_ref(face.hair, flags.pcf_hair)
+    pack_ref(face.eye, flags.pcf_eye)
+    if flags.pcf_hair:
+        buff.write(struct_pack('=f3Bs', face.hairLength, face.hairRed,
+                               face.hairBlue, face.hairGreen, face.unused3))
+    else:
+        buff.seek(8, 1)
+    if flags.pcf_gender:
+        pack_byte(buff, face.gender)
+    else:
+        buff.seek(1, 1)
+    if flags.pcf_name:
+        post_name = buff.getvalue()[buff.tell() + len(old_name) + 2:]
+        pack_byte(buff, len(face.pcName) + 1)
+        buff.write(encode(face.pcName, firstEncoding=Path.sys_fs_enc))
+        buff.write(b'\x00')
+        buff.write(post_name)
+        buff.seek(-len(post_name), 1)
+        save_file.header.pcName = face.pcName
+    else:
+        buff.seek(len(old_name) + 2, 1)
+    if flags.pcf_class and face.npc_class:
+        pack_ref(face.npc_class)
+    save_file.fid_recNum[0x14] = (*old_record[:-1], buff.getvalue())
+    #--Player NPC change record
+    npc, version = save_file.get_npc()
+    if flags.pcf_gender and npc.acbs:
+        npc.acbs.npc_flags.npc_female = face.gender
+    if flags.pcf_stats and npc.acbs:
+        npc.acbs.level_offset = face.level_offset
+        npc.acbs.base_spell = face.base_spell
+        npc.acbs.fatigue = face.fatigue
+        npc.attributes = face.attributes
+        npc.skills = face.skills
+        npc.health = face.health
+        npc.unused2 = face.unused2
+    if flags.pcf_modifiers:
+        npc.modifiers = face.modifiers[:]
+    if flags.pcf_spells:
+        npc.spells = [get_iref(x) for x in face.spells]
+    npc.full = None
+    save_file.fid_recNum[_player_fid] = npc.getTuple(version)
+
 def write_save(save_file: SaveFile):
     save_file.safeSave()
 
@@ -170,7 +248,7 @@ def swap_player(saves_dir: str, backup_dir: str, save_name: str,
     set_created_face(save_file, old_fid, old_face)
     #--new form >> player
     new_face = get_created_face(save_file, new_fid)
-    PCFaces.save_setPlayerFace(save_file, new_face, swap_flags)
+    set_player_face(save_file, new_face, swap_flags)
     write_save(save_file)
     return f'{old_face.pcName} >> {new_face.pcName}'
 
