@@ -98,24 +98,32 @@ class Monitor(threading.Thread):
         with open(request, encoding='cp1252', errors='replace') as ins:
             lines = [ln.strip() for ln in ins if ln.strip()]
         log.info('Request: %s', ' | '.join(lines))
-        try:
-            results = [saves.run_command(ln, self.saves_dir,
-                                         self._backup_dir) for ln in lines]
-        except Exception as e:
-            log.error('Request failed:\n%s', traceback.format_exc())
-            self.last_result = f'Failed: {e}'
-            self._touch('Failed')
-            self._status(Status.ERROR)
-            return
+        started = time.perf_counter()
+        def elapsed_ms():
+            return round((time.perf_counter() - started) * 1000)
+        results = []
+        for line in lines:
+            try:
+                results.append(saves.run_command(line, self.saves_dir,
+                                                 self._backup_dir))
+            except Exception as e:
+                log.error('Request failed on: %s\n%s', line,
+                          traceback.format_exc())
+                self.last_result = f'Failed: {e}'
+                self._touch('Failed')
+                log.error('Wrote Failed.txt after %d ms', elapsed_ms())
+                self._status(Status.ERROR)
+                return
         self.last_result = '; '.join(results) or 'Empty request'
-        log.info('Completed: %s', self.last_result)
+        log.info('Completed in %d ms: %s', elapsed_ms(), self.last_result)
         self._touch('Completed')
         self._status(Status.WATCHING)
 
     def run(self):
         os.makedirs(self.signal_dir, exist_ok=True)
         self._clear_signals()
-        log.info('Watching %s (saves: %s)', self.signal_dir, self.saves_dir)
+        log.info('Watching %s (saves: %s, backups: %s)', self.signal_dir,
+                 self.saves_dir, self._backup_dir)
         self._status(Status.WATCHING)
         while not self._stop_event.wait(POLL_SECONDS):
             try:

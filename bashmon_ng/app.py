@@ -1,7 +1,9 @@
 """Entry point: logging, single instance, game folder, tray + monitor."""
 import logging
 import os
+import platform
 import sys
+import threading
 from logging.handlers import RotatingFileHandler
 
 from . import config, instance
@@ -9,16 +11,50 @@ from ._version import VERSION
 
 log = logging.getLogger('bashmon_ng')
 
-def _setup_logging() -> str:
+# bashmon.log holds the current session; bashmon.log.1 (newest) to .5 the
+# ones before. A session that outgrows LOG_MAX_BYTES also rolls over.
+LOG_BACKUPS = 5
+LOG_MAX_BYTES = 1_000_000
+
+def _setup_logging(new_session: bool) -> str:
+    """Log to bashmon.log in our data folder.
+
+    :param new_session: True when we are the running instance: move the
+        last session's log to bashmon.log.1 first. False when another
+        instance owns the log: only append (renaming a log that another
+        process writes to would fail on Windows)."""
     log_file = os.path.join(config.data_dir(), 'bashmon.log')
-    handler = RotatingFileHandler(log_file, maxBytes=1_000_000,
-                                  backupCount=3, encoding='utf-8')
+    if new_session:
+        handler = RotatingFileHandler(log_file, maxBytes=LOG_MAX_BYTES,
+                                      backupCount=LOG_BACKUPS,
+                                      encoding='utf-8', delay=True)
+        if os.path.isfile(log_file) and os.path.getsize(log_file):
+            try:
+                handler.doRollover()
+            except OSError:
+                pass # e.g. open in an editor - keep appending to it
+    else:
+        handler = logging.FileHandler(log_file, encoding='utf-8')
     handler.setFormatter(logging.Formatter(
         '%(asctime)s %(levelname)s %(name)s: %(message)s'))
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(handler)
     return log_file
+
+def _log_uncaught_errors():
+    """Send errors nothing else catches to the log - the exe has no
+    console, so they would otherwise vanish."""
+    def main_hook(exc_type, exc, tb):
+        log.critical('Unexpected error', exc_info=(exc_type, exc, tb))
+    def thread_hook(args):
+        if args.exc_type is SystemExit:
+            return
+        name = args.thread.name if args.thread else '?'
+        log.critical('Unexpected error in thread %s', name, exc_info=(
+            args.exc_type, args.exc_value, args.exc_traceback))
+    sys.excepthook = main_hook
+    threading.excepthook = thread_hook
 
 def _ask_game_exe() -> str | None:
     """First run: let the user pick Oblivion.exe."""
@@ -63,15 +99,23 @@ def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ['--selftest']:
         return selftest(argv[1] if len(argv) > 1 else config.get_game_dir())
-    log_file = _setup_logging()
     if not instance.acquire():
-        log.info('Another instance is running - exiting')
+        _setup_logging(new_session=False)
+        log.info('Another instance is running (%s) - this copy (version '
+                 '%s) exits', instance.read_info(), VERSION)
         return 0
     try:
+        log_file = _setup_logging(new_session=True)
+        _log_uncaught_errors()
+        instance.write_info(VERSION)
         if not (game_dir := _game_dir()):
             log.info('No Oblivion.exe selected - exiting')
             return 1
-        return _run(game_dir, log_file)
+        try:
+            return _run(game_dir, log_file)
+        except Exception:
+            log.exception('Stopped by an error')
+            return 1
     finally:
         instance.release()
 
@@ -80,8 +124,15 @@ def _run(game_dir: str, log_file: str) -> int:
     from .monitor import Monitor
     from .tray import Tray
     log.info('Starting version %s, game folder %s', VERSION, game_dir)
+    log.info('Exe %s, PID %d, %s, Python %s', sys.executable, os.getpid(),
+             platform.platform(), platform.python_version())
+    log.info('Data folder %s (config, logs, Backups)', config.data_dir())
     monitor = None
+    exit_reason = 'tray stopped'
     def on_exit():
+        nonlocal exit_reason
+        exit_reason = 'Exit chosen in the tray menu'
+        log.info(exit_reason)
         if monitor:
             monitor.stop()
         tray.stop()
@@ -102,5 +153,7 @@ def _run(game_dir: str, log_file: str) -> int:
                                                  'Backups'), tray.set_status)
         monitor.start()
     tray.run(setup)
-    log.info('Exited')
+    if monitor:
+        monitor.stop()
+    log.info('Exited (%s)', exit_reason)
     return 0

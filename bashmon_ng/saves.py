@@ -234,6 +234,57 @@ def set_player_face(save_file: SaveFile, face, swap_flags: int):
 def write_save(save_file: SaveFile):
     save_file.safeSave()
 
+# Logging helpers -------------------------------------------------------------
+def _fid_text(save_file: SaveFile, fid) -> str:
+    """'1E023365 [ElsweyrAnequina.esp]' - a save FormID with its plugin."""
+    if not fid:
+        return 'none'
+    fid = _short(fid)
+    if fid >> 24 == 0xFF:
+        return f'{fid:08X} [created]'
+    masters = save_file._masters
+    plugin = masters[fid >> 24] if fid >> 24 < len(masters) else '?'
+    return f'{fid:08X} [{plugin}]'
+
+def _face_text(save_file: SaveFile, face) -> str:
+    return (f'{face.pcName!r} race {_fid_text(save_file, face.race)}, '
+            f'hair {_fid_text(save_file, face.hair)}, '
+            f'eyes {_fid_text(save_file, face.eye)}, '
+            f'class {_fid_text(save_file, face.npc_class)}, '
+            f'{"female" if face.gender else "male"}, '
+            f'hair length {face.hairLength or 0:g}')
+
+def _check_written_player(save_path: str, backup_dir: str, face,
+                          swap_flags: int):
+    """Read the written save back and warn if the player's race, hair, eyes,
+    class or name are not what was written. Never raises: the swap itself
+    is done, this is only a check for the log."""
+    try:
+        check = load_save(save_path, backup_dir)
+        player = PCFaces.save_getPlayerFace(check)
+        flags = PCFaces.pcf_flags(swap_flags)
+        problems = []
+        for att, wanted_flag in (('race', flags.pcf_race),
+                                 ('hair', flags.pcf_hair),
+                                 ('eye', flags.pcf_eye),
+                                 ('npc_class', flags.pcf_class)):
+            wanted, got = getattr(face, att), getattr(player, att)
+            if wanted_flag and wanted and _short(got) != _short(wanted):
+                problems.append(f'{att} is {_fid_text(check, got)}, wanted '
+                                f'{_fid_text(check, wanted)}')
+        if flags.pcf_name and player.pcName != face.pcName:
+            problems.append(f'name is {player.pcName!r}, wanted '
+                            f'{face.pcName!r}')
+        if problems:
+            log.warning('Check of the written save FAILED: %s',
+                        '; '.join(problems))
+        else:
+            log.info('Check of the written save OK: player %s',
+                     _face_text(check, player))
+    except Exception:
+        log.warning('Could not read the written save back to check it',
+                    exc_info=True)
+
 # Commands --------------------------------------------------------------------
 def swap_player(saves_dir: str, backup_dir: str, save_name: str,
                 old_form: str, new_form: str, flags: str = None):
@@ -243,13 +294,24 @@ def swap_player(saves_dir: str, backup_dir: str, save_name: str,
     swap_flags = SWAP_FLAGS if flags is None else parse_int(flags)
     save_path = os.path.join(saves_dir, os.path.basename(save_name))
     save_file = load_save(save_path, backup_dir)
+    log.info('Save %s: player %r, %d plugins, %d bytes', save_path,
+             save_file.header.pcName, len(save_file._masters),
+             os.path.getsize(save_path))
     #--player >> old form
     old_face = PCFaces.save_getPlayerFace(save_file)
+    try:
+        log.info('%08X before: %s', old_fid, _face_text(
+            save_file, get_created_face(save_file, old_fid)))
+    except Exception as e:
+        log.info('%08X before: unreadable (%s)', old_fid, e)
+    log.info('Player -> %08X: %s', old_fid, _face_text(save_file, old_face))
     set_created_face(save_file, old_fid, old_face)
     #--new form >> player
     new_face = get_created_face(save_file, new_fid)
+    log.info('%08X -> player: %s', new_fid, _face_text(save_file, new_face))
     set_player_face(save_file, new_face, swap_flags)
     write_save(save_file)
+    _check_written_player(save_path, backup_dir, new_face, swap_flags)
     return f'{old_face.pcName} >> {new_face.pcName}'
 
 def _cosave_paths(save_path: str) -> list[str]:
@@ -271,12 +333,17 @@ def move_save(saves_dir: str, old_save: str, new_save: str):
         raise MorphError(f'{old_path} is not a save file.')
     pairs = [(old_path, new_path),
              *zip(_cosave_paths(old_path), _cosave_paths(new_path))]
+    moved, dropped = [], []
     for src, dst in pairs:
         if os.path.isfile(src):
             os.replace(src, dst)
+            moved.append(os.path.basename(src))
         elif os.path.isfile(dst):
             # A stale cosave would belong to the wrong save - drop it
             os.remove(dst)
+            dropped.append(os.path.basename(dst))
+    log.info('Moved %s%s', ', '.join(moved),
+             f'; removed stale {", ".join(dropped)}' if dropped else '')
     return f'{old_save} -> {new_save}'
 
 def run_command(line: str, saves_dir: str, backup_dir: str) -> str:

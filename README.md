@@ -72,7 +72,8 @@ Rebuild the patch the same way whenever your faction mods change.
    Morph's quicksave and quickload.
 
 BashMon never shows pop-ups or notifications, so fullscreen games are not
-interrupted. Its log and settings are in `%LOCALAPPDATA%\Wrye BashMon NG\`,
+interrupted. Its log (`bashmon.log`, plus the last 5 sessions as
+`bashmon.log.1` to `.5`) and settings are in `%LOCALAPPDATA%\Wrye BashMon NG\`,
 along with a backup of the last save it changed (`Backups\`). Only one
 BashMon runs at a time.
 
