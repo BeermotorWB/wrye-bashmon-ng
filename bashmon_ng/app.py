@@ -5,6 +5,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 
 from . import config, instance
+from ._version import VERSION
 
 log = logging.getLogger('bashmon_ng')
 
@@ -78,7 +79,7 @@ def _run(game_dir: str, log_file: str) -> int:
     from . import paths, wb_boot
     from .monitor import Monitor
     from .tray import Tray
-    log.info('Starting, game folder %s', game_dir)
+    log.info('Starting version %s, game folder %s', VERSION, game_dir)
     monitor = None
     def on_exit():
         if monitor:
